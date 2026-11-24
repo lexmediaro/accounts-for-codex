@@ -113,6 +113,25 @@ try {
         $call.home -eq (AccountPath 'work') -and (($call.args -join '|') -eq ($expected -join '|'))
     }
     Check 'afterwards CODEX_HOME is unset again when it was unset before' { $null -eq $env:CODEX_HOME }
+    Check 'a "--" separator reaches Codex in the place it was typed' {
+        codex-as work mcp add docs -- npx -y some-server
+        $first = (LastCall).args -join '|'
+        codex-as work exec -- 'a prompt'
+        $second = (LastCall).args -join '|'
+        codex-as work a -- b -- c
+        $third = (LastCall).args -join '|'
+        $model = 'gpt-5'
+        codex-as work -m $model -- x
+        $fourth = (LastCall).args -join '|'
+        $first -eq 'mcp|add|docs|--|npx|-y|some-server' -and $second -eq 'exec|--|a prompt' -and $third -eq 'a|--|b|--|c' -and $fourth -eq '-m|gpt-5|--|x'
+    }
+    Check 'a quoted "--" is passed once, not twice, and a command without one is left alone' {
+        codex-as work mcp add docs '--' npx
+        $quoted = (LastCall).args -join '|'
+        codex-as work --version
+        $none = (LastCall).args -join '|'
+        $quoted -eq 'mcp|add|docs|--|npx' -and $none -eq '--version'
+    }
     Check 'afterwards CODEX_HOME is back to its earlier value when it had one' {
         $env:CODEX_HOME = 'some-earlier-value'
         try { codex-as personal login status; (LastCall).home -eq (AccountPath 'personal') -and $env:CODEX_HOME -eq 'some-earlier-value' }
@@ -131,6 +150,17 @@ try {
         (Throws { codex-as nobody exec hi } '*no Codex account named*New-CodexAccount nobody*') -and (Calls) -eq $before
     }
     Check 'codex-as with no account explains itself' { Throws { codex-as } '*Usage: codex-as*' }
+
+    if (($PSVersionTable.PSVersion.Major -lt 6) -or $IsWindows) {
+        Check 'on Windows, a native program gets the account folder and the arguments, "--" included' {
+            $stub = $env:CODEX_ACCOUNTS_CODEX
+            $env:CODEX_ACCOUNTS_CODEX = Join-Path $here 'stub-codex.cmd'
+            try { codex-as personal mcp add docs -- npx -y some-server }
+            finally { $env:CODEX_ACCOUNTS_CODEX = $stub }
+            $line = Get-Content -LiteralPath $env:STUB_CODEX_LOG | Select-Object -Last 1
+            $line -eq ('NATIVE home=[{0}] args=[mcp add docs -- npx -y some-server]' -f (AccountPath 'personal'))
+        }
+    }
 
     # --- Enter / Exit
     Check 'Enter-CodexAccount sets this window to the account, and it becomes the current one' {

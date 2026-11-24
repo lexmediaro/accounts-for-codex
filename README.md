@@ -41,7 +41,7 @@ You need the [Codex CLI](https://github.com/openai/codex) on your PATH.
 | Command | What it does |
 |---|---|
 | `New-CodexAccount work` | Creates an empty account folder. Add `-CopyConfigFrom default` to start with the same `config.toml` (settings and MCP servers). |
-| `codex-as work [codex arguments]` | Runs Codex once as that account. Everything after the name goes to Codex unchanged, including options like `-m` and `-c`. |
+| `codex-as work [codex arguments]` | Runs Codex once as that account. Everything after the name goes to Codex as you typed it, including options like `-m` and `-c` and a `--` separator. |
 | `Enter-CodexAccount work` | Makes this window use that account, for plain `codex` and anything else you start from it. `Exit-CodexAccount` puts it back. |
 | `Get-CodexAccount` | Lists your accounts, who is signed in to each (e-mail and plan), and which one this window uses. |
 | `Add-CodexTerminalProfile work` | Windows: adds a "Codex: work" profile to Windows Terminal. Options: `-TabColor '#1A7F37'`, `-Shell pwsh`. Restart Windows Terminal to see it. |
@@ -81,6 +81,7 @@ What it never does:
 - **Don't copy `auth.json` between folders.** It is the login: a copy puts the same account in both places. `-CopyConfigFrom` copies `config.toml` only.
 - **Don't use `setx CODEX_HOME`.** A user-wide value is inherited by every program you start, including the ones that should use your normal account. This module only ever sets it for one run or one window.
 - **Credentials in the system credential store.** If your Codex config sets `cli_auth_credentials_store` to something other than a file, there is no `auth.json` to read and the list shows `SignedIn` as `False` even when you are signed in. Ask Codex itself: `codex-as work login status`.
+- **The `--` separator.** PowerShell normally swallows a bare `--` before a function sees it. `codex-as` puts it back where you typed it, so `codex-as work mcp add docs -- npx -y some-server` works. If a command spans several lines and the `--` goes missing, quote it: `'--'`.
 - **Use accounts that are yours.** A work seat next to a personal plan is the normal case. OpenAI's terms don't allow sharing an account or using extra accounts to get around rate limits, and this module doesn't rotate or pool anything: one window, one account.
 
 ## Uninstall

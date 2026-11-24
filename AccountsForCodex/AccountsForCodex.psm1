@@ -131,6 +131,50 @@ function Get-CodexCommand {
     $found.Source
 }
 
+function Restore-DoubleDash([object[]]$Arguments, $Invocation) {
+    # PowerShell removes the first bare "--" when it calls a function, but Codex needs it
+    # ("codex mcp add docs -- npx ..."). Look at how the command was typed and put it back in the same place.
+    # When that can't be worked out (the command spans lines, or an argument is spliced in with @), nothing is
+    # changed; quoting it as '--' always gets it through.
+    try {
+        $line = $Invocation.Line
+        if (-not $line -or $line.IndexOf('--') -lt 0) { return $Arguments }
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($line, [ref]$tokens, [ref]$errors)
+        $column = $Invocation.OffsetInLine
+        $command = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.CommandAst] -and
+                $node.Extent.StartLineNumber -eq 1 -and $node.Extent.StartColumnNumber -eq $column }, $true)
+        if (-not $command) { return $Arguments }
+        $elements = @($command.CommandElements)
+        for ($i = 2; $i -lt $elements.Count; $i++) {              # 0 is codex-as itself, 1 is the account
+            $element = $elements[$i]
+            if ($element -is [System.Management.Automation.Language.CommandParameterAst]) {
+                if ($element.Extent.Text -eq '--') {
+                    $index = $i - 2
+                    if ($index -gt $Arguments.Count) { return $Arguments }
+                    $restored = New-Object System.Collections.Generic.List[object]
+                    for ($k = 0; $k -lt $Arguments.Count; $k++) {
+                        if ($k -eq $index) { $restored.Add('--') }
+                        $restored.Add($Arguments[$k])
+                    }
+                    if ($index -eq $Arguments.Count) { $restored.Add('--') }
+                    return $restored.ToArray()
+                }
+                if ($element.Argument) { return $Arguments }      # -name:value may arrive as two arguments
+            }
+            elseif ($element -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                if ($element.Splatted) { return $Arguments }      # @list can be any number of arguments
+            }
+            elseif ($element -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                $element -isnot [System.Management.Automation.Language.ExpandableStringExpressionAst] -and
+                $element -isnot [System.Management.Automation.Language.ConstantExpressionAst]) { return $Arguments }
+        }
+    }
+    catch { }
+    $Arguments
+}
+
 function Get-CodexAccount {
     <#
     .SYNOPSIS
@@ -223,13 +267,16 @@ function Invoke-CodexAs {
     Runs Codex once as the given account. Everything after the name goes to Codex unchanged.
     .DESCRIPTION
     Sets CODEX_HOME for this one run and puts it back afterwards, so the rest of the window is unaffected.
-    The alias is codex-as. "default" runs your normal Codex folder.
+    The alias is codex-as. "default" runs your normal Codex folder. A "--" separator reaches Codex too
+    (PowerShell would normally swallow it); if one ever goes missing, quote it: '--'.
     .EXAMPLE
     codex-as work
     .EXAMPLE
     codex-as personal exec "summarize this repo" -m gpt-5
     .EXAMPLE
     codex-as work login status
+    .EXAMPLE
+    codex-as work mcp add docs -- npx -y some-mcp-server
     #>
     # A plain function on purpose: with no [CmdletBinding()], Codex's own options (-m, -c, --model ...) are passed
     # through untouched. The parameter starts with an underscore so that no Codex option can be mistaken for it.
@@ -237,11 +284,12 @@ function Invoke-CodexAs {
     if (-not $_Account) { throw 'Usage: codex-as <account> [codex arguments]. Get-CodexAccount lists your accounts.' }
     $account = Resolve-CodexAccount $_Account
     $codex = Get-CodexCommand
+    $rest = @(Restore-DoubleDash $args $MyInvocation)
     $previous = $env:CODEX_HOME
     try {
         if ($account.Name -eq $script:DefaultName -and -not $env:CODEX_ACCOUNTS_DEFAULT) { Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }
         else { $env:CODEX_HOME = $account.Path }
-        & $codex @args
+        & $codex @rest
     }
     finally {
         if ($null -eq $previous) { Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }
